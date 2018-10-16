@@ -249,6 +249,7 @@ type Object struct {
 	bytes    int64     // Bytes in the object
 	modTime  time.Time // Modified time of the object
 	mimeType string
+	gzipped  bool // set if object has Content-Encoding: gzip
 }
 
 // ------------------------------------------------------------
@@ -809,6 +810,7 @@ func (o *Object) setMetaData(info *storage.Object) {
 	o.url = info.MediaLink
 	o.bytes = int64(info.Size)
 	o.mimeType = info.ContentType
+	o.gzipped = info.ContentEncoding == "gzip"
 
 	// Read md5sum
 	md5sumData, err := base64.StdEncoding.DecodeString(info.Md5Hash)
@@ -912,6 +914,15 @@ func (o *Object) Open(options ...fs.OpenOption) (in io.ReadCloser, err error) {
 	req, err := http.NewRequest("GET", o.url, nil)
 	if err != nil {
 		return nil, err
+	}
+	if o.gzipped {
+		// Allow files which are stored on the cloud storage system
+		// compressed to be downloaded without being decompressed.  Note
+		// that setting this here overrides the automatic decompression
+		// in the Transport.
+		//
+		// See: https://cloud.google.com/storage/docs/transcoding
+		req.Header.Set("Accept-Encoding", "gzip")
 	}
 	fs.OpenOptionAddHTTPHeaders(req.Header, options)
 	var res *http.Response
