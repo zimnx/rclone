@@ -357,6 +357,22 @@ type ObjectUnWrapper interface {
 	UnWrap() Object
 }
 
+// UnWrapObject unwraps the object, returning the deepest object
+func UnWrapObject(o interface{}) interface{} {
+	for {
+		do, ok := o.(ObjectUnWrapper)
+		if !ok {
+			break
+		}
+		newO := do.UnWrap()
+		if newO == nil {
+			break
+		}
+		o = newO
+	}
+	return o
+}
+
 // SetTierer is an optional interface for Object
 type SetTierer interface {
 	// SetTier performs changing storage tier of the Object if
