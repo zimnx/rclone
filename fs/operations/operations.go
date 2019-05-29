@@ -241,8 +241,17 @@ func (o *overrideRemoteObject) MimeType() string {
 	return ""
 }
 
+// UnWrap returns the Object that this Object is wrapping or
+// nil if it isn't wrapping anything
+func (o *overrideRemoteObject) UnWrap() fs.Object {
+	return o.Object
+}
+
 // Check interface is satisfied
-var _ fs.MimeTyper = (*overrideRemoteObject)(nil)
+var (
+	_ fs.MimeTyper       = (*overrideRemoteObject)(nil)
+	_ fs.ObjectUnWrapper = (*overrideRemoteObject)(nil)
+)
 
 // Copy src object to dst or f if nil.  If dst is nil then it uses
 // remote as the name of the new object.
