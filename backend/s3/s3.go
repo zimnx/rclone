@@ -1818,10 +1818,25 @@ func (o *Object) Update(in io.Reader, src fs.ObjectInfo, options ...fs.OpenOptio
 		})
 	}
 
-	// Set the mtime in the meta data
-	metadata := map[string]*string{
-		metaMtime: aws.String(swift.TimeToFloatString(modTime)),
+	// Metadata for upload
+	metadata := map[string]*string{}
+	fs.Debugf(o, "src = %#v", src)
+
+	// Read metadata from source s3 object if available
+	srcObj, ok := fs.UnWrapObject(src).(*Object)
+	if ok {
+		fs.Debugf(o, "Reading metadata from %v", srcObj)
+		err := srcObj.readMetaData() // reads info and meta, returning an error
+		if err != nil {
+			return err
+		}
+		for k, v := range srcObj.meta {
+			metadata[k] = v
+		}
 	}
+
+	// Set the mtime in the meta data
+	metadata[metaMtime] = aws.String(swift.TimeToFloatString(modTime))
 
 	// read the md5sum if available for non multpart and if
 	// disable checksum isn't present.
