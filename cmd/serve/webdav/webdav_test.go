@@ -71,6 +71,7 @@ func TestWebDav(t *testing.T) {
 		"RCLONE_CONFIG_WEBDAVTEST_TYPE=webdav",
 		"RCLONE_CONFIG_WEBDAVTEST_URL="+w.Server.URL(),
 		"RCLONE_CONFIG_WEBDAVTEST_VENDOR=other",
+		"RCLONE_CONFIG_WEBDAVTEST_DELETE_ON_ERROR=true",
 	)
 	out, err := cmd.CombinedOutput()
 	if len(out) != 0 {

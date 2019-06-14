@@ -79,17 +79,27 @@ func init() {
 		}, {
 			Name: "bearer_token",
 			Help: "Bearer token instead of user/pass (eg a Macaroon)",
+		}, {
+			Name:    "delete_on_error",
+			Default: false,
+			Help: `Delete a partially uploaded file on upload failure.
+
+Some webdav backends (eg rclone serve webdav) leave behind half
+written files on error.  This flag causes them to be deleted if the
+upload fails part of the way through.`,
+			Advanced: true,
 		}},
 	})
 }
 
 // Options defines the configuration for this backend
 type Options struct {
-	URL         string `config:"url"`
-	Vendor      string `config:"vendor"`
-	User        string `config:"user"`
-	Pass        string `config:"pass"`
-	BearerToken string `config:"bearer_token"`
+	URL           string `config:"url"`
+	Vendor        string `config:"vendor"`
+	User          string `config:"user"`
+	Pass          string `config:"pass"`
+	BearerToken   string `config:"bearer_token"`
+	DeleteOnError bool   `config:"delete_on_error"`
 }
 
 // Fs represents a remote webdav
@@ -1081,14 +1091,16 @@ func (o *Object) Update(in io.Reader, src fs.ObjectInfo, options ...fs.OpenOptio
 		return shouldRetry(resp, err)
 	})
 	if err != nil {
-		// Give the WebDAV server a chance to get its internal state in order after the
-		// error.  The error may have been local in which case we closed the connection.
-		// The server may still be dealing with it for a moment. A sleep isn't ideal but I
-		// haven't been able to think of a better method to find out if the server has
-		// finished - ncw
-		time.Sleep(1 * time.Second)
-		// Remove failed upload
-		_ = o.Remove()
+		if o.fs.opt.DeleteOnError {
+			// Give the WebDAV server a chance to get its internal state in order after the
+			// error.  The error may have been local in which case we closed the connection.
+			// The server may still be dealing with it for a moment. A sleep isn't ideal but I
+			// haven't been able to think of a better method to find out if the server has
+			// finished - ncw
+			time.Sleep(1 * time.Second)
+			// Remove failed upload
+			_ = o.Remove()
+		}
 		return err
 	}
 	// read metadata from remote
