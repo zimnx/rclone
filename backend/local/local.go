@@ -909,7 +909,7 @@ func (o *Object) openTranslatedLink(offset, limit int64) (lrc io.ReadCloser, err
 	// Read the link and return the destination  it as the contents of the object
 	linkdst, err := os.Readlink(o.path)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "read link")
 	}
 	return readers.NewLimitedReadCloser(ioutil.NopCloser(strings.NewReader(linkdst[offset:])), limit), nil
 }
@@ -940,7 +940,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 
 	fd, err := file.Open(o.path)
 	if err != nil {
-		return
+		return nil, errors.Wrap(err, "Open")
 	}
 	wrappedFd := readers.NewLimitedReadCloser(newFadviseReadCloser(o, fd, offset, limit), limit)
 	if offset != 0 {
@@ -1000,9 +1000,18 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	// If it is a translated link, just read in the contents, and
 	// then create a symlink
 	if !o.translatedLink {
+		fi, err := os.Lstat(o.path)
+		// if object is currently a symlink remove it
+		if err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			fs.Debugf(o, "Deleting as is symlink before updating as file")
+			err = os.Remove(o.path)
+			if err != nil {
+				fs.Debugf(o, "Failed to removing symlink: %v", err)
+			}
+		}
 		f, err := file.OpenFile(o.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "Update")
 		}
 		// Pre-allocate the file for performance reasons
 		err = preAllocate(src.Size(), f)
