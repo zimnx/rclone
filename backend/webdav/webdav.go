@@ -720,6 +720,27 @@ func (f *Fs) _mkdir(dirPath string) error {
 		if apiErr.StatusCode == http.StatusMethodNotAllowed || apiErr.StatusCode == http.StatusNotAcceptable || apiErr.StatusCode == http.StatusLocked {
 			return nil
 		}
+		// Bitrix emits a 409 when the directory does not exist, so just check to see if the
+		// directory is really OK before returning it.
+		if apiErr.StatusCode == http.StatusConflict {
+			opts = rest.Opts{
+				Method: "PROPFIND",
+				Path:   dirPath,
+				ExtraHeaders: map[string]string{
+					"Depth": "0",
+				},
+			}
+			var result api.Multistatus
+			err = f.pacer.Call(func() (bool, error) {
+				resp, err := f.srv.CallXML(&opts, nil, &result)
+				return f.shouldRetry(resp, err)
+			})
+			// Directory is really OK if PROPFIND suceeded
+			if err == nil {
+				return nil
+			}
+			return apiErr // return original error
+		}
 	}
 	return err
 }
