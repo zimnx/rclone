@@ -701,7 +701,7 @@ func (f *Fs) list(ctx context.Context, dirIDs []string, title string, directorie
 		fields += ",quotaBytesUsed"
 	}
 
-	fields = fmt.Sprintf("files(%s),nextPageToken", fields)
+	fields = fmt.Sprintf("files(%s),nextPageToken,incompleteSearch", fields)
 
 OUTER:
 	for {
@@ -712,6 +712,9 @@ OUTER:
 		})
 		if err != nil {
 			return false, errors.Wrap(err, "couldn't list directory")
+		}
+		if files.IncompleteSearch {
+			fs.Errorf(f, "search result INCOMPLETE")
 		}
 		for _, item := range files.Files {
 			item.Name = enc.ToStandardName(item.Name)
