@@ -40,7 +40,7 @@ import (
 const enc = encodings.Mega
 
 const (
-	minSleep      = 10 * time.Millisecond
+	minSleep      = 1 * time.Millisecond
 	maxSleep      = 2 * time.Second
 	eventWaitTime = 500 * time.Millisecond
 	decayConstant = 2 // bigger for slower decay, exponential
