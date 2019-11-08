@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -49,7 +51,7 @@ const (
 	rootURL                     = "https://www.jottacloud.com/jfs/"
 	apiURL                      = "https://api.jottacloud.com/"
 	baseURL                     = "https://www.jottacloud.com/"
-	tokenURL                    = "https://api.jottacloud.com/auth/v1/token"
+	tokenURL                    = "https://id.jottacloud.com/auth/realms/jottacloud/protocol/openid-connect/token"
 	registerURL                 = "https://api.jottacloud.com/auth/v1/register"
 	cachePrefix                 = "rclone-jcmd5-"
 	rcloneClientID              = "nibfk8biu12ju7hpqomr8b1e40"
@@ -89,7 +91,10 @@ func init() {
 				}
 			}
 
-			srv := rest.NewClient(fshttp.NewClient(fs.Config))
+			clientConfig := *fs.Config
+			clientConfig.UserAgent = "JottaCli 0.6.18626 windows-amd64"
+			srv := rest.NewClient(fshttp.NewClient(&clientConfig))
+
 			fmt.Printf("\nDo you want to create a machine specific API key?\n\nRclone has it's own Jottacloud API KEY which works fine as long as one only uses rclone on a single machine. When you want to use rclone with this account on more than one machine it's recommended to create a machine specific API key. These keys can NOT be shared between machines.\n\n")
 			if config.Confirm(false) {
 				deviceRegistration, err := registerDevice(ctx, srv)
@@ -113,11 +118,10 @@ func init() {
 			oauthConfig.ClientID = clientID
 			oauthConfig.ClientSecret = obscure.MustReveal(clientSecret)
 
-			fmt.Printf("Username> ")
-			username := config.ReadLine()
-			password := config.GetPassword("Your Jottacloud password is only required during setup and will not be stored.")
+			fmt.Printf("Login Token> ")
+			loginToken := config.ReadLine()
 
-			token, err := doAuth(ctx, srv, username, password)
+			token, err := doAuth(ctx, srv, loginToken)
 			if err != nil {
 				log.Fatalf("Failed to get oauth token: %s", err)
 			}
@@ -278,38 +282,50 @@ func registerDevice(ctx context.Context, srv *rest.Client) (reg *api.DeviceRegis
 }
 
 // doAuth runs the actual token request
-func doAuth(ctx context.Context, srv *rest.Client, username, password string) (token oauth2.Token, err error) {
+func doAuth(ctx context.Context, srv *rest.Client, loginTokenBase64 string) (token oauth2.Token, err error) {
+	loginTokenBytes, err := base64.StdEncoding.DecodeString(loginTokenBase64)
+	if err != nil {
+		return token, err
+	}
+
+	var loginToken api.LoginToken
+	decoder := json.NewDecoder(bytes.NewReader(loginTokenBytes))
+	err = decoder.Decode(&loginToken)
+	if err != nil {
+		return token, err
+	}
+
+	// we don't seem to need any data from this link but the API is not happy if skip it
+	opts := rest.Opts{
+		Method:     "GET",
+		RootURL:    loginToken.WellKnownLink,
+		NoResponse: true,
+	}
+	_, err = srv.Call(ctx, &opts)
+	if err != nil {
+		return token, err
+	}
+
 	// prepare out token request with username and password
 	values := url.Values{}
-	values.Set("grant_type", "PASSWORD")
-	values.Set("password", password)
-	values.Set("username", username)
-	values.Set("client_id", oauthConfig.ClientID)
-	values.Set("client_secret", oauthConfig.ClientSecret)
-	opts := rest.Opts{
+	values.Set("client_id", "jottacli")
+	values.Set("grant_type", "password")
+	values.Set("password", loginToken.AuthToken)
+	values.Set("scope", "offline_access+openid")
+	values.Set("username", loginToken.Username)
+	values.Encode()
+	opts = rest.Opts{
 		Method:      "POST",
 		RootURL:     oauthConfig.Endpoint.AuthURL,
 		ContentType: "application/x-www-form-urlencoded",
-		Parameters:  values,
+		Body:        strings.NewReader(values.Encode()),
 	}
 
 	// do the first request
 	var jsonToken api.TokenJSON
-	resp, err := srv.CallJSON(ctx, &opts, nil, &jsonToken)
+	_, err = srv.CallJSON(ctx, &opts, nil, &jsonToken)
 	if err != nil {
-		// if 2fa is enabled the first request is expected to fail. We will do another request with the 2fa code as an additional http header
-		if resp != nil {
-			if resp.Header.Get("X-JottaCloud-OTP") == "required; SMS" {
-				fmt.Printf("This account uses 2 factor authentication you will receive a verification code via SMS.\n")
-				fmt.Printf("Enter verification code> ")
-				authCode := config.ReadLine()
-
-				authCode = strings.Replace(authCode, "-", "", -1) // remove any "-" contained in the code so we have a 6 digit number
-				opts.ExtraHeaders = make(map[string]string)
-				opts.ExtraHeaders["X-Jottacloud-Otp"] = authCode
-				resp, err = srv.CallJSON(ctx, &opts, nil, &jsonToken)
-			}
-		}
+		return token, err
 	}
 
 	token.AccessToken = jsonToken.AccessToken
@@ -471,29 +487,6 @@ func (f *Fs) filePath(file string) string {
 	return urlPathEscape(f.filePathRaw(file))
 }
 
-// Jottacloud requires the grant_type 'refresh_token' string
-// to be uppercase and throws a 400 Bad Request if we use the
-// lower case used by the oauth2 module
-//
-// This filter catches all refresh requests, reads the body,
-// changes the case and then sends it on
-func grantTypeFilter(req *http.Request) {
-	if tokenURL == req.URL.String() {
-		// read the entire body
-		refreshBody, err := ioutil.ReadAll(req.Body)
-		if err != nil {
-			return
-		}
-		_ = req.Body.Close()
-
-		// make the refresh token upper case
-		refreshBody = []byte(strings.Replace(string(refreshBody), "grant_type=refresh_token", "grant_type=REFRESH_TOKEN", 1))
-
-		// set the new ReadCloser (with a dummy Close())
-		req.Body = ioutil.NopCloser(bytes.NewReader(refreshBody))
-	}
-}
-
 // NewFs constructs an Fs from the path, container:path
 func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 	ctx := context.TODO()
@@ -518,16 +511,7 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 	oauthConfig.ClientID = clientID
 	oauthConfig.ClientSecret = obscure.MustReveal(clientSecret)
 
-	// the oauth client for the api servers needs
-	// a filter to fix the grant_type issues (see above)
 	baseClient := fshttp.NewClient(fs.Config)
-	if do, ok := baseClient.Transport.(interface {
-		SetRequestFilter(f func(req *http.Request))
-	}); ok {
-		do.SetRequestFilter(grantTypeFilter)
-	} else {
-		fs.Debugf(name+":", "Couldn't add request filter - uploads will fail")
-	}
 	oAuthClient, ts, err := oauthutil.NewClientWithBaseClient(name, m, oauthConfig, baseClient)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to configure Jottacloud oauth client")
