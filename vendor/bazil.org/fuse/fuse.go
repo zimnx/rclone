@@ -1004,7 +1004,7 @@ loop:
 		}
 
 	case opBmap:
-		panic("opBmap")
+		return nil, ENOSYS
 
 	case opDestroy:
 		req = &DestroyRequest{
